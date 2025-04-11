@@ -1,0 +1,18 @@
+[project]
+name = "audiodiary-backend"
+version = "0.1.0"
+description = "Audio diary app backend with FastAPI + LangChain"
+authors = [
+    {name = "Kouta-i5",email = "pond140529@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "mysqlclient (>=2.2.7,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
