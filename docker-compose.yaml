@@ -1,4 +1,5 @@
 services:
+#Dockerネットワーク内でのホスト名
   backend:
     build: .
     container_name: audiodiary-web-backend
@@ -11,7 +12,7 @@ services:
     restart: always
     depends_on:
       - db
-
+#Dockerネットワーク内でのホスト名
   db:
     image: postgres:14
     container_name: audiodiary-db
