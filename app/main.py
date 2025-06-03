@@ -1,15 +1,20 @@
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI
-from app.api import chat
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+from app.api import chat, diary
+from app.database import Base, engine
 
-# CORSミドルウェアの設定
+# データベーステーブルの作成
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Audio Diary API")
+
+# CORSの設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js のURL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -17,3 +22,4 @@ app.add_middleware(
 
 # ルーターの登録
 app.include_router(chat.router)
+app.include_router(diary.router)

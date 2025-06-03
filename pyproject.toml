@@ -1,18 +1,33 @@
-[project]
-name = "audiodiary-backend"
+[tool.poetry]
+name = "patent-checker-backend"
 version = "0.1.0"
-description = "Audio diary app backend with FastAPI + LangChain"
-authors = [
-    {name = "Kouta-i5",email = "pond140529@gmail.com"}
-]
-license = {text = "MIT"}
+description = "AIを活用した日記アプリ開発"
+authors = ["Your Name <you@example.com>"]
 readme = "README.md"
-requires-python = ">=3.12,<4.0"
-dependencies = [
-    "mysqlclient (>=2.2.7,<3.0.0)"
-]
+packages = [{ include = "app" }]
 
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "0.115.9"
+uvicorn = { extras = ["standard"], version = "^0.30.0" }
+langchain = "^0.3.25"
+langchain-community = "^0.3.24"
+openai = "^1.30.1"
+pydantic = "^2.7.1"
+python-dotenv = "^1.0.1"
+openpyxl = "^3.1.5"
+httpx = "^0.28.1"
+beautifulsoup4 = "^4.12.3"
+langchain-openai = "^0.3.18"
+chromadb = "^1.0.10"
+python-jose = {extras = ["cryptography"], version = "^3.5.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-multipart = "^0.0.20"
+sqlalchemy = "^2.0.41"
+alembic = "^1.16.1"
+psycopg2-binary = "^2.9.10"
+email-validator = "^2.2.0"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
