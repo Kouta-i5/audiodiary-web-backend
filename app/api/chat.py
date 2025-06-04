@@ -1,13 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
 
 # モデル
-from app.schemas.chat import SetContextRequest, MessageRequest, SummaryRequest
-from app.models.user import User
-from app.database import get_db
-from app.core.security import get_current_user
+from app.schemas.chat import ChatContext, Message, Summary
 # サービス
 from app.services.chat import set_context, send_message, get_summary
 
@@ -17,26 +14,38 @@ router = APIRouter(prefix="/chat")
 async def root():
     return RedirectResponse(url="/docs")
 
-@router.post("/context")
+@router.post("/context", response_model=Dict[str, Any])
 async def set_chat_context(
-    context: SetContextRequest,
-    current_user: User = Depends(get_current_user)
+    context: ChatContext,
 ):
     """会話のコンテキストを設定"""
-    return await set_context(context)
+    try:
+        return await set_context(context)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/message")
 async def send_chat_message(
-    request: MessageRequest,
-    current_user: User = Depends(get_current_user)
+    request: Message,
 ):
     """メッセージを送信"""
-    return await send_message(request.message)
+    try:
+        response = await send_message(request.content)
+        if not response:
+            raise HTTPException(status_code=500, detail="AIからの応答が空です")
+        return {"content": response}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/summarize")
-async def summarize(
-    request: SummaryRequest,
-    current_user: User = Depends(get_current_user)
-):
+@router.post("/summarize", response_model=Dict[str, str])
+async def summarize():
     """会話を要約"""
-    return await get_summary(request.conversation)
+    try:
+        summary = await get_summary()
+        return {"summary": summary}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -8,11 +8,9 @@ class ChatContext(BaseModel):
     companion: str
     mood: str
 
-class SetContextRequest(BaseModel):
-    context: ChatContext
 
-class MessageRequest(BaseModel):
+class Message(BaseModel):
     content: str
 
-class SummaryRequest(BaseModel):
-    conversation: str 
+class Summary(BaseModel):
+    pass 

@@ -1,23 +1,20 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, Dict, List
-from app.schemas.user import UserResponse
+from app.schemas.chat import ChatContext
 
 class DiaryResponse(BaseModel):
-    id: int
+    diary_id: int
     date: datetime
-    context: Dict
-    messages: List[Dict]
+    context: List[ChatContext]
     summary: Optional[str] = None
-    user: UserResponse
 
     class Config:
         from_attributes = True 
 
 class DiaryRequest(BaseModel):
     date: datetime
-    context: Dict
-    messages: List[Dict]
+    context: List[ChatContext]
     summary: Optional[str] = None
 
     class Config:
