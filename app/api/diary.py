@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import datetime
 
-from app.schemas.diary import DiaryResponse
+from app.schemas.diary import DiaryRequest, DiaryResponse
 from app.models.diary import Diary
 from app.database import get_db
 
@@ -31,4 +32,4 @@ async def delete_diary(diary_id: int, db: Session = Depends(get_db)):
     
     db.delete(conversation)
     db.commit()
-    return {"message": "日記を削除しました"} 
+    return {"message": "日記を削除しました"}

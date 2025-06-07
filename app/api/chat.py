@@ -2,9 +2,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
+from app.schemas.diary import DiaryRequest, DiaryResponse
+from app.services.chat import save_summary_to_db
+from app.database import get_db
 
 # モデル
-from app.schemas.chat import ChatContext, Message, Summary
+from app.schemas.chat import ChatContext, Message
 # サービス
 from app.services.chat import set_context, send_message, get_summary
 
@@ -49,3 +52,15 @@ async def summarize():
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/save", response_model=DiaryResponse)
+async def save_diary(
+    req: DiaryRequest,
+    db: Session = Depends(get_db),
+):
+    """要約と（任意）context を受け取って保存"""
+    try:
+        return await save_summary_to_db(req.summary, req.context, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

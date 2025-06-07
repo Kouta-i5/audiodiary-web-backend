@@ -1,262 +1,200 @@
-from langchain.chains import ConversationChain
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_core.runnables import RunnableWithMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.chat_history import BaseChatMessageHistory
-from app.schemas.chat import ChatContext
+# app/services/chat.py
+from __future__ import annotations
+
+import asyncio
 import os
-from dotenv import load_dotenv
-from typing import Dict, Optional, Tuple, List, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import openai
+from dotenv import load_dotenv
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.messages import AIMessage, HumanMessage
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-# .envファイルから環境変数を読み込む
+from app.models.diary import Diary
+from app.schemas.chat import ChatContext
+
+# ==== 環境変数 & OpenAI 初期化 ======================================
 load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")  # 必ず .env に設定
 
-# OpenAI APIキーの設定
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# 会話コンテキストの保存用
-current_context = None
-
-# ChatOpenAI インスタンスを作成（APIキーを環境変数から読み込む）
-llm = ChatOpenAI(
-    model="gpt-4",
-    temperature=0.7,
-    api_key=os.getenv("OPENAI_API_KEY")
-)
-
-# プロンプトテンプレート
-template = """
-あなたは日記アプリの会話パートナーです。
-以下の情報を元に、ユーザーと日常会話を通じてその日の出来事を引き出してください。
-
-【現在の状況】
-{context_info}
-
-【会話履歴】
-{history}
-
-【新しいメッセージ】
-ユーザー: {input}
-
-【応答】
-上記の状況と会話履歴を考慮して、以下の点に注意して自然な会話を続けてください：
-1. コンテキストの情報（時間、場所、一緒にいる人、気分）を自然な形で会話に組み込む
-2. ユーザーの気分や状況に合わせた質問や話題を提供する
-3. 具体的な質問をして、より詳細な情報を引き出す
-4. 会話の流れを維持しながら、新しい話題に自然に移行する
-5. 簡潔で親しみやすい表現を使用する
-
-AI:
-"""
-
-# 最初のメッセージ用のプロンプトテンプレート
-initial_message_template = """
-あなたは日記アプリの会話パートナーです。
-以下の情報を元に、ユーザーとの会話を始めてください。
-
-【現在の状況】
-{context_info}
-
-【最初のメッセージ】
-上記の状況を考慮して、以下の点に注意して自然な会話を始めてください：
-1. 時間帯に応じた適切な挨拶をする
-2. 場所や一緒にいる人の情報を自然に会話に組み込む
-3. ユーザーの気分に合わせた話題を提供する
-4. その日の出来事について、具体的な質問をする
-5. 簡潔で親しみやすい表現を使用する
-
-AI:
-"""
-
-prompt = PromptTemplate(
-    input_variables=["context_info", "history", "input"],
-    template=template
-)
-
-initial_message_prompt = PromptTemplate(
-    input_variables=["context_info"],
-    template=initial_message_template
-)
-
-# 要約用のプロンプトテンプレート
-summary_template = """
-以下の会話を要約してください。重要なポイントや感情、出来事を簡潔にまとめてください。
-
-【会話内容】
-{conversation}
-
-【要約】
-"""
-
-summary_prompt = PromptTemplate(
-    input_variables=["conversation"],
-    template=summary_template
-)
-
-# 会話メモリ（直近5発話まで記憶）
-class InMemoryChatMessageHistory(BaseChatMessageHistory):
-    def __init__(self):
-        self.messages = []
-        self.k = 5  # 保持するメッセージ数
+# ==== グローバル・シングルトン ======================================
+class _Memory(BaseChatMessageHistory):
+    def __init__(self) -> None:
+        self.messages: List[AIMessage | HumanMessage] = []
 
     def add_message(self, message):
         self.messages.append(message)
-        if len(self.messages) > self.k * 2:  # ユーザーとAIのメッセージを考慮
-            self.messages = self.messages[-self.k * 2:]
 
     def clear(self):
         self.messages = []
 
-memory = InMemoryChatMessageHistory()
 
-def get_default_context() -> Dict:
-    """デフォルトのコンテキストを生成"""
+current_context: ChatContext | None = None  # 直近セッションのコンテキスト
+current_summary: str | None = None          # 要約のキャッシュ（未保存用）
+memory = _Memory()                          # 会話メモリ
+
+# ==== ユーティリティ =================================================
+def get_default_context() -> ChatContext:
+    """コンテキスト未設定時に使うデフォルト値"""
     now = datetime.now()
-    return {
-        "date": now.strftime("%Y-%m-%d"),
-        "time_of_day": "不明",
-        "location": "不明",
-        "companion": "不明",
-        "mood": "不明"
-    }
-
-def format_context_info(context: ChatContext) -> str:
-    """コンテキスト情報を文字列にフォーマット"""
-    return f"""日付: {context.date.strftime('%Y-%m-%d')}
-時間帯: {context.time_of_day}
-場所: {context.location}
-一緒にいる人: {context.companion}
-気分: {context.mood}"""
-
-def format_messages(messages: List) -> str:
-    """メッセージ履歴を文字列にフォーマット"""
-    if not messages:
-        return "まだ会話は始まっていません。"
-    
-    formatted = ""
-    for msg in messages:
-        if isinstance(msg, HumanMessage):
-            formatted += f"ユーザー: {msg.content}\n"
-        elif isinstance(msg, AIMessage):
-            formatted += f"AI: {msg.content}\n"
-    return formatted
-
-async def set_context(context: ChatContext) -> Dict[str, Any]:
-    """会話のコンテキストを設定"""
-    global current_context
-    current_context = context
-    
-    # メモリをクリア
-    memory.clear()
-    
-    # 初期メッセージを生成
-    prompt = f"""
-    以下のコンテキストに基づいて、自然な会話の開始メッセージを生成してください：
-    
-    日付: {context.date.strftime('%Y-%m-%d')}
-    時間: {context.time_of_day}
-    場所: {context.location}
-    相手: {context.companion}
-    気分: {context.mood}
-    
-    メッセージは以下の条件を満たしてください：
-    1. 自然な会話の流れを作る
-    2. コンテキストの情報を自然に組み込む
-    3. 相手の気分や状況に配慮する
-    4. 簡潔で親しみやすい表現を使用する
-    """
-    
-    # 新しいAPIバージョンに対応
-    response = openai.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "system", "content": prompt}],
-        max_tokens=150
+    return ChatContext(
+        date=now,
+        time_of_day="不明",
+        location="不明",
+        companion="不明",
+        mood="不明",
     )
-    
-    initial_message = response.choices[0].message.content
-    memory.add_message(AIMessage(content=initial_message))
-    
-    return {
-        "initial_message": initial_message,
-        "context": context
-    }
+
+
+def format_context_info(ctx: ChatContext) -> str:
+    return (
+        f"日付: {ctx.date:%Y-%m-%d}\n"
+        f"時間帯: {ctx.time_of_day}\n"
+        f"場所: {ctx.location}\n"
+        f"一緒にいる人: {ctx.companion}\n"
+        f"気分: {ctx.mood}"
+    )
+
+
+def format_messages(msgs: List[AIMessage | HumanMessage]) -> str:
+    if not msgs:
+        return "まだ会話は始まっていません。"
+    buf = []
+    for m in msgs:
+        role = "ユーザー" if isinstance(m, HumanMessage) else "AI"
+        buf.append(f"{role}: {m.content}")
+    return "\n".join(buf)
+
+
+# ==== API 関数群 =====================================================
+async def set_context(ctx: ChatContext) -> Dict[str, Any]:
+    """会話コンテキストを設定し、最初の挨拶を返す"""
+    global current_context
+    current_context = ctx
+    memory.clear()
+
+    sys_prompt = (
+        "あなたは日記アプリの会話パートナーです。"
+        "以下のコンテキストを踏まえ自然な会話を開始してください:\n"
+        f"{format_context_info(ctx)}"
+    )
+
+    # OpenAI 呼び出しは同期なので別スレッドへ
+    resp = await asyncio.to_thread(
+        openai.chat.completions.create,
+        model="gpt-4",
+        messages=[{"role": "system", "content": sys_prompt}],
+        max_tokens=150,
+    )
+    first_msg = resp.choices[0].message.content.strip()
+    memory.add_message(AIMessage(content=first_msg))
+    return {"initial_message": first_msg, "context": ctx}
+
 
 async def send_message(content: str) -> str:
-    """メッセージを送信"""
-    if not current_context:
-        # デフォルトコンテキストを設定
-        default_context = get_default_context()
-        context = ChatContext(
-            date=datetime.now(),
-            time_of_day=default_context["time_of_day"],
-            location=default_context["location"],
-            companion=default_context["companion"],
-            mood=default_context["mood"]
-        )
-        await set_context(context)
-    
-    # ユーザーのメッセージをメモリに追加
+    """ユーザーがチャットを送信"""
+    if current_context is None:
+        await set_context(get_default_context())
+
     memory.add_message(HumanMessage(content=content))
-    
-    # コンテキストと会話履歴を取得
-    context_str = format_context_info(current_context)
-    history = memory.messages
-    
-    # プロンプトの作成
-    prompt = f"""
-{context_str}
 
-会話履歴:
-{format_messages(history)}
-
-ユーザー: {content}
-AI: """
-    
-    # OpenAI APIを呼び出し
-    response = openai.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": template},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=1000
+    prompt = (
+        f"{format_context_info(current_context)}\n\n"
+        f"会話履歴:\n{format_messages(memory.messages)}\n\n"
+        f"ユーザー: {content}\nAI:"
     )
-    
-    # 応答を取得
-    ai_response = response.choices[0].message.content.strip()
-    
-    # AIの応答をメモリに追加
-    memory.add_message(AIMessage(content=ai_response))
-    
-    return ai_response
+
+    resp = await asyncio.to_thread(
+        openai.chat.completions.create,
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=1000,
+    )
+    answer = resp.choices[0].message.content.strip()
+    memory.add_message(AIMessage(content=answer))
+    return answer
+
 
 async def get_summary() -> str:
-    """会話を要約"""
-    # メモリから会話履歴を取得
-    conversation = format_messages(memory.messages)
-    
-    prompt = f"""
-    以下の会話を要約してください。重要なポイントや感情、出来事を簡潔にまとめてください。
+    """会話を要約し `current_summary` にキャッシュする"""
+    global current_summary
 
-    会話内容:
-    {conversation}
+    convo = format_messages(memory.messages)
+    if convo.startswith("まだ会話は"):
+        raise ValueError("要約する会話がありません")
 
-    要約は以下の条件を満たしてください：
-    1. 重要なポイントを簡潔にまとめる
-    2. 会話の流れを保持する
-    3. 感情や雰囲気も含める
-    4. 箇条書きで3-5点程度にまとめる
-    """
-    
-    response = openai.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "system", "content": prompt}],
-        max_tokens=200
+    sys_prompt = (
+        "以下の会話を要約してください。重要な出来事・感情を箇条書き3-5点で:\n"
+        f"{convo}"
     )
-    
-    return response.choices[0].message.content 
+
+    resp = await asyncio.to_thread(
+        openai.chat.completions.create,
+        model="gpt-4",
+        messages=[{"role": "system", "content": sys_prompt}],
+        max_tokens=200,
+    )
+    summary = resp.choices[0].message.content.strip()
+    if not summary:
+        raise ValueError("要約の生成に失敗しました")
+
+    current_summary = summary  # ★キャッシュ
+    memory.clear()             # 履歴は破棄
+    return summary
+
+
+async def save_summary(db: Session) -> Diary:
+    """`current_summary` を DB に保存（無ければ先に生成）"""
+    global current_summary
+
+    summary = current_summary or await get_summary()
+    if not summary:
+        raise ValueError("要約が存在しません")
+
+    diary = Diary(
+        date=datetime.now(),
+        context=[current_context.model_dump()] if current_context else [],
+        summary=summary,
+    )
+
+    try:
+        db.add(diary)
+        db.commit()
+        db.refresh(diary)
+        return diary
+    except Exception as exc:
+        db.rollback()
+        raise ValueError(f"データベース保存に失敗しました: {exc}") from exc
+    finally:
+        current_summary = None  # 保存完了後にキャッシュ破棄
+
+async def save_summary_to_db(
+    summary: str,
+    context: Optional[ChatContext],
+    db: Session,
+) -> Diary:
+    """受け取った summary / context をそのまま DB 保存"""
+    # contextのdatetimeを文字列に変換
+    context_dict = None
+    if context:
+        context_dict = context.model_dump()
+        context_dict["date"] = context_dict["date"].isoformat()
+
+    diary = Diary(
+        date=datetime.now(),
+        context=[context_dict] if context_dict else [],
+        summary=summary,
+    )
+
+    try:
+        db.add(diary)
+        db.commit()
+        db.refresh(diary)
+        return diary
+    except Exception as exc:
+        db.rollback()
+        raise ValueError(f"データベース保存に失敗: {exc}") from exc

@@ -11,6 +11,3 @@ class ChatContext(BaseModel):
 
 class Message(BaseModel):
     content: str
-
-class Summary(BaseModel):
-    pass 
