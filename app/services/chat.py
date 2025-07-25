@@ -128,7 +128,7 @@ async def get_summary() -> str:
         raise ValueError("要約する会話がありません")
 
     sys_prompt = (
-        "以下の会話を要約してください。重要な出来事・感情を箇条書き3-5点で:\n"
+        "以下の会話を理解した上でユーザーの出来事をもとに日記を作成してください:\n"
         f"{convo}"
     )
 
@@ -146,31 +146,6 @@ async def get_summary() -> str:
     memory.clear()             # 履歴は破棄
     return summary
 
-
-async def save_summary(db: Session) -> Diary:
-    """`current_summary` を DB に保存（無ければ先に生成）"""
-    global current_summary
-
-    summary = current_summary or await get_summary()
-    if not summary:
-        raise ValueError("要約が存在しません")
-
-    diary = Diary(
-        date=datetime.now(),
-        context=[current_context.model_dump()] if current_context else [],
-        summary=summary,
-    )
-
-    try:
-        db.add(diary)
-        db.commit()
-        db.refresh(diary)
-        return diary
-    except Exception as exc:
-        db.rollback()
-        raise ValueError(f"データベース保存に失敗しました: {exc}") from exc
-    finally:
-        current_summary = None  # 保存完了後にキャッシュ破棄
 
 async def save_summary_to_db(
     summary: str,
